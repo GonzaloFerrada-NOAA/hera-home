@@ -1,0 +1,10 @@
+FontText: "Monospace,11,-1,5,50,0,0,0,0,0"
+Color.DiffAll.Back: "#ee9192"
+Color.DiffAllSup.Back: "#ffeab7"
+Color.Same.Back: "#ffffff"
+Color.SameBlank.Back: "#ffffff"
+Show.LineNumbers: True
+TabWidth: 4
+Command.DiffFiles2: "diff -w -b"
+Show.LineNumbers: True
+Geometry: 2000x1000

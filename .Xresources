@@ -1,0 +1,5 @@
+XTerm*geometry: 150x40
+XTerm*background: black
+XTerm*foreground: green
+XTerm*faceName: Monospace
+XTerm*faceSize: 9
