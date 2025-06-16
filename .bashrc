@@ -12,15 +12,11 @@ then
 fi
 
 source /scratch1/BMC/gsd-fv3-dev/Gonzalo.Ferrada/miniconda3/etc/profile.d/conda.sh
-source /home/Gonzalo.Ferrada/.gittoken
 
 # Uncomment the following line if you don't like systemctl's auto-paging feature:
 # export SYSTEMD_PAGER=
 
 # User specific aliases and functions
-# export PS1='\[\033[31m\]${HOSTNAME%%.*}:\[\033[32m\]$(pwd | cut -d/ -f2)\e[0m:$(basename $(dirname $(pwd)))/\W\e[0m> '
-# export PS1='\[\033[31m\]${HOSTNAME%%.*}:\[\033[32m\]$(pwd | cut -d/ -f2)\[\033[37m\]:$(basename $(dirname $(pwd)))\[\033[33m\]/\W\e[0m> ' # og causes issues
-# export PS1='\[\033[31m\]\h:\[\033[33m\]\W\[\033[0m\]> ' # does not causes issues in terminal
 alias ls='ls --color=auto'
 export CLICOLOR=1
 export LSCOLORS=ExFxBxDxCxegedabagacad
@@ -42,6 +38,7 @@ module load xxdiff
 module load nco cdo ncl
 module load rocoto
 module load wgrib2
+
 
 # Common aliases:
 alias c='clear'
@@ -78,13 +75,17 @@ alias tf="tail -f "
 alias weight="du -skh"
 alias ncview="ncview -repl"
 
+
+# Slurm:
+alias qsme="date; squeue --user=Gonzalo.Ferrada"
+alias qs="date; squeue --start --user=Gonzalo.Ferrada"
+
+
 # Sudo:
 alias rtfim="sudo su - role.rtfim"
 
 
-
-
-# Paths:
+# PATH:
 PATH="/home/Gonzalo.Ferrada/bin:$PATH"
 export PATH
 
@@ -105,41 +106,7 @@ alias loadmatlab1='module load matlab; matlab -nodesktop -nosplash'
 # Geoweaver:
 export GEOWEAVER_PORT=8071
 
-
-
-# Slurm:
-alias qsme="date; squeue --user=Gonzalo.Ferrada"
-alias qs="date; squeue --start --user=Gonzalo.Ferrada"
-
-
-# Copy to untrusted data:
-# share ()
-# {
-#   cp -r ${1} /scratch1/data_untrusted/Gonzalo.Ferrada
-# }
-
-# queueavail:
-qavail ()
-{ 
-    echo "====================================================================";
-    eval "sinfo -N -r -l -p $1";
-    echo "====================================================================";
-    echo "Nodes allocated   : " $(sinfo -N -r -l -p $1 | grep allocated | wc -l);
-    echo "Nodes mixed       : " $(sinfo -N -r -l -p $1 | grep mixed | wc -l);
-    echo "Nodes available   : " $(sinfo -N -r -l -p $1 | grep idle | wc -l);
-    echo "===================================================================="
-}
-
-# update_prompt() {
-#     DIR1=$(pwd | cut -d/ -f2)
-#     DIR2=$(basename "$(dirname "$(pwd)")")
-#     PS1="\[\033[31m\]\h:\[\033[32m\]$DIR1\[\033[37m\]:$DIR2\[\033[33m\]/\W\e[0m> "
-# }
-#
-# PROMPT_COMMAND=update_prompt
-# export PS1='\[\033[31m\]\h:\[\033[32m\]\W\[\033[0m\]> '
-# export PS1='\[\033[31m\]\h:\[\033[32m\]\u\[\033[37m\]:\[\033[33m\]\W\[\033[0m\]> ' # WORKS!!
-# SOLUTION: Works exactly as I want:
+# Terminal beautification:
 update_prompt() {
     DIR1=$(echo "$PWD" | cut -d/ -f2)               # Extract top-level directory
     DIR2=$(basename "$(dirname "$PWD")")           # Extract parent of current directory
@@ -148,27 +115,6 @@ update_prompt() {
 
 PROMPT_COMMAND=update_prompt
 
-# update_prompt() {
-#     DIR1=$(echo "$PWD" | cut -d/ -f2)               # Extract top-level directory
-#     DIR2=$(basename "$(dirname "$PWD")")           # Extract parent of current directory
-#
-#     # Clear existing title by sending an empty title first
-#     echo -ne "\033]0;\007"
-#
-#     # Set new terminal title (fully overwriting previous content)
-#     echo -ne "\033]0;${USER}@${HOSTNAME%%.*}: $PWD\007"
-#
-#     # Update the actual prompt
-#     PS1="\[\033[31m\]\h:\[\033[32m\]$DIR1\[\033[37m\]:$DIR2\[\033[33m\]/\W\[\033[0m\]> "
-# }
-#
-# PROMPT_COMMAND=update_prompt
-
-
-
-
-
-
-
+# Java (Geoweaver):
 export JAVA_HOME="/home/Gonzalo.Ferrada/jdk/jdk-11.0.18+10"
 export PATH="$JAVA_HOME/bin:$PATH"

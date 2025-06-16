@@ -1,0 +1,12 @@
+#!/bin/bash
+
+qavail ()
+{ 
+    echo "====================================================================";
+    eval "sinfo -N -r -l -p $1";
+    echo "====================================================================";
+    echo "Nodes allocated   : " $(sinfo -N -r -l -p $1 | grep allocated | wc -l);
+    echo "Nodes mixed       : " $(sinfo -N -r -l -p $1 | grep mixed | wc -l);
+    echo "Nodes available   : " $(sinfo -N -r -l -p $1 | grep idle | wc -l);
+    echo "===================================================================="
+}
