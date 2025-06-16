@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+#
+# Usage examples
+#   inter                     # defaults
+#   inter dev 4h 16           # dev, 16 tasks, 4 h
+#   inter 20 debug 200G       # 20 tasks, 30 min debug QoS, 200 GB RAM
+#   inter 45m                 # 45 min wall clock
+#
+# Recognised tokens (order-independent)
+#   test | dev                - account
+#   1–20                      - ntasks
+#   45m  | 4h | 01:30:00      - walltime
+#   batch | debug | urgent    - QoS
+#   200G (any number-G)       - memory
+#
+# -------------------------------------------------------------------
+
+account=test
+ntasks=10
+walltime="4:00:00"
+qos=batch
+mem=""                       #  NEW (empty = no memory flag)
+
+for arg in "$@"; do
+    case "$arg" in
+        test|dev)                account="$arg" ;;
+        [1-9]|1[0-9]|20)         ntasks="$arg" ;;
+        *m)                      walltime="00:${arg%m}:00" ;;
+        *h)                      walltime="${arg%h}:00:00" ;;
+        *:*)                     walltime="$arg" ;;
+        batch|debug|urgent)      qos="$arg" ;;
+        [0-9]*G)                 mem="${arg%G}G" ;;
+        *)  printf 'Error: unrecognised arg "%s"\n' "$arg" >&2; exit 1 ;;
+    esac
+done
+
+# Auto-adjust QoS ↔ walltime
+# Auto-adjust QoS ↔ walltime
+if [[ "$walltime" =~ ^00:([0-2][0-9]|30):00$ ]]; then
+    qos=debug
+fi
+
+[[ "$qos" == debug ]] && walltime="00:30:00"
+
+# Assemble salloc command
+cmd=(salloc --partition=hera
+            --account="gsd-fv3-${account}"
+            --ntasks="$ntasks"
+            --time="$walltime"
+            --qos="$qos")
+[[ -n $mem ]] && cmd+=(--mem="$mem")   #  NEW (only if requested)
+
+# Verbose summary
+printf '%s\n' "$(date)"
+printf 'inter: requesting interactive session as:\n'
+printf 'Account         : gsd-fv3-%s\n' "$account"
+printf 'Number of Tasks : %s\n' "$ntasks"
+printf 'Walltime        : %s\n' "$walltime"
+printf 'QoS             : %s\n' "$qos"
+[[ -n $mem ]] && printf 'Memory          : %s\n' "$mem"
+
+printf '\n%s\n\n' "${cmd[*]}"
+"${cmd[@]}"
