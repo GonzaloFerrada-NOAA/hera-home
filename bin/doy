@@ -1,0 +1,4 @@
+#!/bin/bash
+
+datein=$( date -d "$1" +%Y%m%d )
+echo $( date -d "$datein" +%j )

@@ -1,0 +1,36 @@
+#!/scratch3/BMC/gsd-fv3-dev/Gonzalo.Ferrada/miniconda3/envs/fire/bin/python3
+import sys
+import pandas as pd
+
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: csvsummary.py file.csv column_name [column_name2 ...]")
+        sys.exit(1)
+
+    file = sys.argv[1]
+    cols = sys.argv[2:]
+
+    try:
+        df = pd.read_csv(file)
+    except Exception as e:
+        print(f"Error reading file: {e}")
+        sys.exit(1)
+
+    print(f"file: {file}")
+    print(f"{'Variable':<15}{'Min':>12}{'Mean':>12}{'Max':>12}")
+    print(f"{'-'*15}{'-'*12}{'-'*12}{'-'*12}")
+
+    for col in cols:
+        if col not in df.columns:
+            print(f"{col:<15}{'N/A':>12}{'N/A':>12}{'N/A':>12}")
+            continue
+        try:
+            s = pd.to_numeric(df[col], errors='coerce').dropna()
+            if s.empty:
+                raise ValueError
+            print(f"{col:<15}{s.min():>12.2f}{s.mean():>12.2f}{s.max():>12.2f}")
+        except Exception:
+            print(f"{col:<15}{'N/A':>12}{'N/A':>12}{'N/A':>12}")
+
+if __name__ == "__main__":
+    main()
