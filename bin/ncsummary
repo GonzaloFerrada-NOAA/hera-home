@@ -1,0 +1,205 @@
+#!/scratch3/BMC/gsd-fv3-dev/Gonzalo.Ferrada/miniconda3/envs/fire/bin/python3
+import sys
+from pathlib import Path
+
+import numpy as np
+from netCDF4 import Dataset
+
+# ANSI colors
+RESET = "\033[0m"
+BOLD = "\033[1m"
+BLUE = "\033[34m"
+GREEN = "\033[32m"
+RED = "\033[31m"
+
+BOLD_BLUE = BOLD + BLUE
+
+
+def fmt_number(value, width):
+    """Format numbers for a fixed-width column, allowing exponent notation."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return f"{'NaN':>{width}}"
+    # 4 significant digits in a field of fixed width
+    # (Python guarantees the result fits the given width)
+    return f"{value:{width}.4g}"
+
+
+def main():
+    if len(sys.argv) != 2:
+        prog = Path(sys.argv[0]).name
+        print(f"Usage: {prog} file.nc")
+        sys.exit(1)
+
+    filename = sys.argv[1]
+
+    try:
+        ds = Dataset(filename, "r")
+    except Exception as e:
+        print(f"Error opening {filename}: {e}")
+        sys.exit(1)
+
+    rows = []
+    for name, var in ds.variables.items():
+        # long_name → description → ""
+        if hasattr(var, "long_name"):
+            long_name = str(getattr(var, "long_name"))
+        elif hasattr(var, "description"):
+            long_name = str(getattr(var, "description"))
+        else:
+            long_name = ""
+
+        # limit long_name length to 40 characters
+        if len(long_name) > 40:
+            long_name = long_name[:40]
+
+        # dimension sizes
+        dims = "(" + ", ".join(str(ds.dimensions[d].size) for d in var.dimensions) + ")"
+
+        # read data
+        data = var[:]
+
+        # numeric / non-numeric handling
+        if not np.issubdtype(data.dtype, np.number):
+            vmin = vmean = vmax = np.nan
+            missing = 0
+        else:
+            if isinstance(data, np.ma.MaskedArray):
+                missing = int(np.sum(data.mask))
+                valid = data.compressed()
+            else:
+                arr = np.array(data, dtype=float)
+                missing = int(np.isnan(arr).sum())
+                valid = arr[~np.isnan(arr)]
+
+            if valid.size == 0:
+                vmin = vmean = vmax = np.nan
+            else:
+                vmin = float(valid.min())
+                vmean = float(valid.mean())
+                vmax = float(valid.max())
+
+        rows.append(
+            {
+                "name": name,
+                "long_name": long_name,
+                "dims": dims,
+                "min": vmin,
+                "mean": vmean,
+                "max": vmax,
+                "missing": missing,
+            }
+        )
+
+    ds.close()
+
+    # Do we have ANY long_name/description at all?
+    have_long_name = any(r["long_name"] for r in rows)
+
+    # column widths
+    var_width = max([len("Var")] + [len(r["name"]) for r in rows]) + 1
+
+    if have_long_name:
+        ln_width = max([len("long_name")] + [len(r["long_name"]) for r in rows]) + 1
+    else:
+        ln_width = 0
+
+    dim_width = max([len("Dimensions")] + [len(r["dims"]) for r in rows])
+    num_width = 10  # fixed width for min/mean/max
+    miss_width = max(len("N_missing"), max(len(str(r["missing"])) for r in rows))
+
+    # header / separators
+    print(f"file: {filename}")
+
+    if have_long_name:
+        total_width = (
+            var_width
+            + 1
+            + ln_width
+            + 1
+            + dim_width
+            + 1
+            + num_width * 3
+            + 3
+            + miss_width
+        )
+    else:
+        total_width = (
+            var_width
+            + 1
+            + dim_width
+            + 1
+            + num_width * 3
+            + 3
+            + miss_width
+        )
+
+    print("-" * total_width)
+
+    if have_long_name:
+        header = (
+            f"{'Var':<{var_width}} "
+            f"{'long_name':<{ln_width}} "
+            f"{'Dimensions':<{dim_width}} "
+            f"{'Min.':>{num_width}} "
+            f"{'Mean':>{num_width}} "
+            f"{'Max.':>{num_width}} "
+            f"{'N_missing':>{miss_width}}"
+        )
+    else:
+        header = (
+            f"{'Var':<{var_width}} "
+            f"{'Dimensions':<{dim_width}} "
+            f"{'Min.':>{num_width}} "
+            f"{'Mean':>{num_width}} "
+            f"{'Max.':>{num_width}} "
+            f"{'N_missing':>{miss_width}}"
+        )
+
+    print(header)
+    print("-" * total_width)
+
+    for r in rows:
+        # pre-pad / align without color
+        var_field = f"{r['name']:<{var_width}}"
+        dim_field = f"{r['dims']:<{dim_width}}"
+
+        min_field = fmt_number(r["min"], num_width)
+        mean_field = fmt_number(r["mean"], num_width)
+        max_field = fmt_number(r["max"], num_width)
+        miss_field = f"{r['missing']:>{miss_width}d}"
+
+        # apply colors after padding
+        var_col = f"{BOLD_BLUE}{var_field}{RESET}"
+        dim_col = dim_field
+        min_col = f"{GREEN}{min_field}{RESET}"
+        mean_col = f"{GREEN}{mean_field}{RESET}"
+        max_col = f"{GREEN}{max_field}{RESET}"
+        miss_col = f"{RED}{miss_field}{RESET}"
+
+        if have_long_name:
+            ln_field = f"{r['long_name']:<{ln_width}}"
+            ln_col = f"{BLUE}{ln_field}{RESET}"
+            line = (
+                f"{var_col} "
+                f"{ln_col} "
+                f"{dim_col} "
+                f"{min_col} "
+                f"{mean_col} "
+                f"{max_col} "
+                f"{miss_col}"
+            )
+        else:
+            line = (
+                f"{var_col} "
+                f"{dim_col} "
+                f"{min_col} "
+                f"{mean_col} "
+                f"{max_col} "
+                f"{miss_col}"
+            )
+
+        print(line)
+
+
+if __name__ == "__main__":
+    main()

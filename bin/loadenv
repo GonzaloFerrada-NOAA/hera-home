@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# Load modules:
+module load gnu intel/2023.2.0 ncview/2.1.7 netcdf/4.7.0
+module load xxdiff
+module load nco cdo ncl
+# module load rocoto
+module load wgrib2
+
+module list
