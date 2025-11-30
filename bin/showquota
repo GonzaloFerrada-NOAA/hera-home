@@ -1,33 +1,64 @@
 #!/bin/bash
 
-# Run the saccount_params command and filter the directory information
 saccount_params | grep -E "Directory:" | awk '
 BEGIN {
-    # Print the table header
-    printf "%-40s %-10s %-10s %-5s\n", "Directory", "In use", "Quota", "%"
-    printf "%-40s %-10s %-10s %-5s\n", "----------------------------------------", "---------", "---------", "-----"
+  # ANSI SGR codes
+  GREEN   = "\033[32m";   ORANGE = "\033[38;5;208m"
+  RED     = "\033[31m";   BOLD   = "\033[1m"
+  RESET   = "\033[0m"
+
+  # only these directories:
+  include["/scratch3/BMC/gsd-fv3"]        = 1
+  include["/scratch3/BMC/gsd-fv3-dev"]    = 1
+  include["/scratch4/BMC/gsd-fv3-dev"]    = 1
+  include["/scratch4/BMC/gsd-fv3-test"]   = 1
+  include["/scratch3/NCEPDEV/rstprod"]    = 1
+
+  # bold entire line for these:
+  bolddirs["/scratch3/BMC/gsd-fv3-dev"]  = 1
+  bolddirs["/scratch4/BMC/gsd-fv3-dev"]  = 1
+  bolddirs["/scratch4/BMC/gsd-fv3-test"] = 1
+
+  # header
+  printf "%-35s %-10s %-10s %-5s\n", "Directory", "In use", "Quota", "%"
+  printf "%-35s %-10s %-10s %-5s\n", "-----------------------------------", "---------", "---------", "-----"
 }
+
 {
-    # Extract the directory path
-    dir = $2
+  dir = $2
+  if (!(dir in include)) next
 
-    # Extract DiskInUse and Quota values
-    match($0, /DiskInUse=([0-9]+) ([A-Z]+), Quota=([0-9]+) ([A-Z]+)/, arr)
-    disk_in_use = arr[1] " " arr[2]
-    quota = arr[3] " " arr[4]
+  # extract DiskInUse & Quota
+  match($0, /DiskInUse=([0-9]+) ([A-Z]+), Quota=([0-9]+) ([A-Z]+)/, A)
+  used      = A[1] " " A[2]
+  quota     = A[3] " " A[4]
+  num_used  = A[1] + 0
+  num_quota = A[3] + 0
+  pct       = (num_quota>0 ? int((num_used/num_quota)*100+0.5) : 0)
 
-    # Convert the numeric parts for percentage calculation
-    disk_value = arr[1] + 0
-    quota_value = arr[3] + 0
+  # choose color & (maybe) bold for the percentage
+  if (pct < 70) {
+    color = GREEN;  pbold = ""
+  } else if (pct < 90) {
+    color = ORANGE; pbold = ""
+  } else {
+    color = RED;    pbold = BOLD
+  }
 
-    # Calculate the usage percentage
-    if (quota_value > 0) {
-        percent = (disk_value / quota_value) * 100
-    } else {
-        percent = 0
-    }
+  # build the percent cell
+  percent = color pbold sprintf("%3d%%", pct) RESET
 
-    # Print the formatted row
-    printf "%-40s %-10s %-10s %3d%%\n", dir, disk_in_use, quota, percent
-}'
+  # build the un-colored columns
+  row = sprintf("%-35s %-10s %-10s ", dir, used, quota)
 
+  # assemble full line
+  full = row percent
+
+  # print, bolding the whole line if needed
+  if (dir in bolddirs) {
+    printf("%s%s\n", BOLD, full)
+  } else {
+    printf("%s\n", full)
+  }
+}
+'

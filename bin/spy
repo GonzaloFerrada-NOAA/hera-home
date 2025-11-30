@@ -1,0 +1,91 @@
+#!/bin/bash
+# Usage: spy <any_order_args>
+# Args: script.py | integers (tasks) | 2n (nodes) | 30m/2h (time)
+
+# --- 1. Defaults ---
+tasks=10
+time_str="02:00:00"
+total_mins=120     # Used for QoS calculation
+account="gsd-fv3-dev"
+script=""
+nodes=""
+
+# --- 2. Smart Argument Parsing ---
+for arg in "$@"; do
+    # Match .py file
+    if [[ "$arg" == *.py ]]; then
+        script="$arg"
+    # Match Integer + 'n' (Nodes)
+    elif [[ "$arg" =~ ^([0-9]+)n$ ]]; then
+        nodes="${BASH_REMATCH[1]}"
+    # Match Integer + 'm' or 'h' (Time)
+    elif [[ "$arg" =~ ^([0-9]+)([mh])$ ]]; then
+        val="${BASH_REMATCH[1]}"
+        unit="${BASH_REMATCH[2]}"
+        if [[ "$unit" == "m" ]]; then
+            time_str="$val"
+            total_mins=$val
+        else
+            time_str="$val:00:00"
+            total_mins=$((val * 60))
+        fi
+    # Match Plain Integer (Tasks)
+    elif [[ "$arg" =~ ^[0-9]+$ ]]; then
+        tasks="$arg"
+    else
+        account="$arg"
+    fi
+done
+
+# --- 3. Safety Check ---
+if [[ -z "$script" ]]; then
+    echo "Error: No .py script found. Usage: spy <script.py> [options]"
+    exit 1
+fi
+
+# --- 4. Logic: QoS and Log Naming ---
+# Set QoS based on total minutes
+qos="normal"
+[[ $total_mins -le 30 ]] && qos="debug"
+
+# Sanitize script name for log file:
+clean_name=$(echo "${script%.py}" | tr -d "'" | tr '(), ' '-' | sed 's/-*$//')
+
+logfile="log.${clean_name}"
+counter=1
+while [[ -e "$logfile" ]]; do
+    logfile="log.${clean_name}.${counter}"
+    ((counter++))
+done
+
+# Check if Nodes or Tasks
+if [[ -n "$nodes" ]]; then
+    res_line="#SBATCH --nodes=${nodes}"
+else
+    res_line="#SBATCH --ntasks=${tasks}"
+fi
+
+# --- 5. Submit ---
+sbatch <<EOF
+#!/bin/bash
+#SBATCH --job-name=${clean_name:0:14}
+${res_line}
+#SBATCH --time=${time_str}
+#SBATCH --output=${logfile}
+#SBATCH --account=${account}
+#SBATCH --cluster=c6
+#SBATCH --qos=${qos}
+#SBATCH --mail-type=FAIL
+#SBATCH --mail-user=${USER}@noaa.gov
+
+# Load Environment
+source /scratch3/BMC/gsd-fv3-dev/Gonzalo.Ferrada/miniconda3/etc/profile.d/conda.sh
+conda activate fire
+
+PY=\$(which python)
+
+echo "Running: ${script} | QoS: ${qos} | Log: ${logfile}"
+
+time \$PY -u ${script}
+
+EOF

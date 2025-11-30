@@ -1,0 +1,87 @@
+#!/bin/bash
+# Usage: submitmatlab <any_order_args>
+# Args: script.m OR "func(a,b)" | integers (tasks) | 2n (nodes) | 30m/2h (time)
+
+# --- 1. Defaults ---
+tasks=10
+time_str="02:00:00"
+total_mins=120     # Used for QoS calculation
+account="gsd-fv3-dev"
+script=""
+nodes=""
+
+# --- 2. Smart Argument Parsing ---
+for arg in "$@"; do
+    # Match .m file OR string containing parentheses "func(a,b)"
+    if [[ "$arg" == *.m ]] || [[ "$arg" =~ .*\) ]]; then
+        script="$arg"
+    # Match Integer + 'n' (Nodes)
+    elif [[ "$arg" =~ ^([0-9]+)n$ ]]; then
+        nodes="${BASH_REMATCH[1]}"
+    # Match Integer + 'm' or 'h' (Time)
+    elif [[ "$arg" =~ ^([0-9]+)([mh])$ ]]; then
+        val="${BASH_REMATCH[1]}"
+        unit="${BASH_REMATCH[2]}"
+        if [[ "$unit" == "m" ]]; then
+            time_str="$val"
+            total_mins=$val
+        else
+            time_str="$val:00:00"
+            total_mins=$((val * 60))
+        fi
+    # Match Plain Integer (Tasks)
+    elif [[ "$arg" =~ ^[0-9]+$ ]]; then
+        tasks="$arg"
+    else
+        account="$arg"
+    fi
+done
+
+# --- 3. Safety Check ---
+if [[ -z "$script" ]]; then
+    echo "Error: No script found. Usage: submitmatlab <script.m | \"func(args)\"> [options]"
+    exit 1
+fi
+
+# --- 4. Logic: QoS and Log Naming ---
+# Set QoS based on total minutes
+qos="normal"
+[[ $total_mins -le 30 ]] && qos="debug"
+
+# Sanitize script name for log file:
+# 1. Remove .m  2. Remove quotes  3. Replace ( ) , space with hyphens  4. Remove trailing hyphens
+# Example: "process(10, 'a')" -> process-10-a
+clean_name=$(echo "${script%.m}" | tr -d "'" | tr '(), ' '-' | sed 's/-*$//')
+
+logfile="log.${clean_name}"
+counter=1
+while [[ -e "$logfile" ]]; do
+    logfile="log.${clean_name}.${counter}"
+    ((counter++))
+done
+
+# Check if Nodes or Tasks
+if [[ -n "$nodes" ]]; then
+    res_line="#SBATCH --nodes=${nodes}"
+else
+    res_line="#SBATCH --ntasks=${tasks}"
+fi
+
+# --- 5. Submit ---
+sbatch <<EOF
+#!/bin/bash
+#SBATCH --job-name=${clean_name:0:8}
+${res_line}
+#SBATCH --time=${time_str}
+#SBATCH --output=${logfile}
+#SBATCH --account=${account}
+#SBATCH --partition=hera
+#SBATCH --qos=${qos}
+#SBATCH --mail-type=FAIL
+#SBATCH --mail-user=${USER}@noaa.gov
+
+module load matlab
+echo "Running: \"${script}\" | QoS: ${qos} | Log: ${logfile}"
+# We strip .m extension if present, otherwise pass the string as is (for functions)
+matlab -nodisplay -nosplash -nodesktop -r "tic; ${script%.m}; toc; exit"
+EOF
