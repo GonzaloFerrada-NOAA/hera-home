@@ -1,5 +1,6 @@
 #!/scratch3/BMC/gsd-fv3-dev/Gonzalo.Ferrada/miniconda3/envs/fire/bin/python3
 import sys
+import fnmatch
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,9 @@ BOLD = "\033[1m"
 BLUE = "\033[34m"
 GREEN = "\033[32m"
 RED = "\033[31m"
+CYAN = "\033[36m"
+YELLOW = "\033[33m"
+PURPLE = "\033[35m"
 
 BOLD_BLUE = BOLD + BLUE
 
@@ -20,17 +24,22 @@ def fmt_number(value, width):
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return f"{'NaN':>{width}}"
     # 4 significant digits in a field of fixed width
-    # (Python guarantees the result fits the given width)
     return f"{value:{width}.4g}"
 
 
 def main():
-    if len(sys.argv) != 2:
+    # Allow 2 or 3 arguments
+    if len(sys.argv) < 2 or len(sys.argv) > 3:
         prog = Path(sys.argv[0]).name
-        print(f"Usage: {prog} file.nc")
+        print(f"Usage: {prog} file.nc [variable_pattern]")
         sys.exit(1)
 
     filename = sys.argv[1]
+    
+    # Check for optional variable argument
+    target_pattern = None
+    if len(sys.argv) == 3:
+        target_pattern = sys.argv[2]
 
     try:
         ds = Dataset(filename, "r")
@@ -38,9 +47,60 @@ def main():
         print(f"Error opening {filename}: {e}")
         sys.exit(1)
 
+    # --- VARIABLE SELECTION LOGIC ---
+    all_vars = list(ds.variables.keys())
+    vars_to_process = []
+
+    if target_pattern:
+        # Check if the user provided a wildcard pattern
+        if "*" in target_pattern or "?" in target_pattern:
+            # 1. Try standard case-sensitive wildcard match
+            matches = fnmatch.filter(all_vars, target_pattern)
+            
+            # 2. If no matches, try case-insensitive wildcard match
+            if not matches:
+                matches = [v for v in all_vars if fnmatch.fnmatch(v.lower(), target_pattern.lower())]
+                if matches:
+                    print(f"{YELLOW}Warning: No exact matches for '{target_pattern}'. Found {len(matches)} case-insensitive matches.{RESET}")
+
+            if not matches:
+                print(f"{RED}Error: No variables match the pattern '{target_pattern}' in file '{filename}'.{RESET}")
+                ds.close()
+                sys.exit(1)
+            
+            vars_to_process = matches
+
+        else:
+            # EXACT MATCH LOGIC (No wildcards)
+            if target_pattern in all_vars:
+                # Exact match found
+                vars_to_process = [target_pattern]
+            else:
+                # Try case-insensitive match
+                found_match = None
+                for v in all_vars:
+                    if v.lower() == target_pattern.lower():
+                        found_match = v
+                        break
+                
+                if found_match:
+                    print(f"{YELLOW}Warning: Variable '{target_pattern}' not found. Showing '{found_match}' instead.{RESET}")
+                    vars_to_process = [found_match]
+                else:
+                    print(f"{RED}Error: Variable '{target_pattern}' does not exist in file '{filename}'.{RESET}")
+                    ds.close()
+                    sys.exit(1)
+    else:
+        # No pattern provided, process all variables
+        vars_to_process = all_vars
+
     rows = []
-    for name, var in ds.variables.items():
-        # long_name → description → ""
+    
+    # Iterate over the selected list of variable names
+    for name in vars_to_process:
+        var = ds.variables[name]
+
+        # --- 1. METADATA EXTRACTION ---
         if hasattr(var, "long_name"):
             long_name = str(getattr(var, "long_name"))
         elif hasattr(var, "description"):
@@ -48,21 +108,33 @@ def main():
         else:
             long_name = ""
 
-        # limit long_name length to 40 characters
         if len(long_name) > 40:
             long_name = long_name[:40]
+            
+        if hasattr(var, "units"):
+            units = str(getattr(var, "units"))
+        elif hasattr(var, "Units"):
+            units = str(getattr(var, "Units"))
+        else:
+            units = ""
+        
+        if len(units) > 14:
+            units = units[:14]
 
-        # dimension sizes
         dims = "(" + ", ".join(str(ds.dimensions[d].size) for d in var.dimensions) + ")"
 
-        # read data
+        # --- 2. DATA HANDLING ---
         data = var[:]
 
-        # numeric / non-numeric handling
-        if not np.issubdtype(data.dtype, np.number):
-            vmin = vmean = vmax = np.nan
+        # Check if numeric
+        is_numeric = np.issubdtype(data.dtype, np.number)
+
+        if not is_numeric:
+            # Non-numeric: values irrelevant, set placeholders
+            vmin = vmean = vmax = None
             missing = 0
         else:
+            # Numeric: Calculate stats
             if isinstance(data, np.ma.MaskedArray):
                 missing = int(np.sum(data.mask))
                 valid = data.compressed()
@@ -82,121 +154,116 @@ def main():
             {
                 "name": name,
                 "long_name": long_name,
+                "units": units,
                 "dims": dims,
                 "min": vmin,
                 "mean": vmean,
                 "max": vmax,
                 "missing": missing,
+                "is_numeric": is_numeric,
             }
         )
 
     ds.close()
 
-    # Do we have ANY long_name/description at all?
+    # --- 3. FORMATTING SETUP ---
+    if not rows:
+        # Should be caught earlier, but safety check
+        print("No variables found.")
+        sys.exit(0)
+
     have_long_name = any(r["long_name"] for r in rows)
+    have_units = any(r["units"] for r in rows)
 
-    # column widths
+    # Column widths
     var_width = max([len("Var")] + [len(r["name"]) for r in rows]) + 1
-
+    
     if have_long_name:
         ln_width = max([len("long_name")] + [len(r["long_name"]) for r in rows]) + 1
     else:
         ln_width = 0
 
+    if have_units:
+        unit_width = max([len("Units")] + [len(r["units"]) for r in rows]) + 1
+    else:
+        unit_width = 0
+
     dim_width = max([len("Dimensions")] + [len(r["dims"]) for r in rows])
-    num_width = 10  # fixed width for min/mean/max
+    num_width = 10 
     miss_width = max(len("N_missing"), max(len(str(r["missing"])) for r in rows))
 
-    # header / separators
-    print(f"file: {filename}")
-
+    # Calculate total width
+    total_width = var_width + 1 + dim_width + 1 + (num_width * 3) + 3 + miss_width
     if have_long_name:
-        total_width = (
-            var_width
-            + 1
-            + ln_width
-            + 1
-            + dim_width
-            + 1
-            + num_width * 3
-            + 3
-            + miss_width
-        )
-    else:
-        total_width = (
-            var_width
-            + 1
-            + dim_width
-            + 1
-            + num_width * 3
-            + 3
-            + miss_width
-        )
+        total_width += (ln_width + 1)
+    if have_units:
+        total_width += (unit_width + 1)
 
+    print(f"file: {filename}")
     print("-" * total_width)
 
+    # Header
+    header = f"{'Var':<{var_width}} "
     if have_long_name:
-        header = (
-            f"{'Var':<{var_width}} "
-            f"{'long_name':<{ln_width}} "
-            f"{'Dimensions':<{dim_width}} "
-            f"{'Min.':>{num_width}} "
-            f"{'Mean':>{num_width}} "
-            f"{'Max.':>{num_width}} "
-            f"{'N_missing':>{miss_width}}"
-        )
-    else:
-        header = (
-            f"{'Var':<{var_width}} "
-            f"{'Dimensions':<{dim_width}} "
-            f"{'Min.':>{num_width}} "
-            f"{'Mean':>{num_width}} "
-            f"{'Max.':>{num_width}} "
-            f"{'N_missing':>{miss_width}}"
-        )
+        header += f"{'long_name':<{ln_width}} "
+    if have_units:
+        header += f"{'Units':<{unit_width}} "
+        
+    header += (
+        f"{'Dimensions':<{dim_width}} "
+        f"{'Min.':>{num_width}} "
+        f"{'Mean':>{num_width}} "
+        f"{'Max.':>{num_width}} "
+        f"{'N_missing':>{miss_width}}"
+    )
 
     print(header)
     print("-" * total_width)
 
+    # --- 4. PRINT LOOP ---
     for r in rows:
-        # pre-pad / align without color
         var_field = f"{r['name']:<{var_width}}"
         dim_field = f"{r['dims']:<{dim_width}}"
+        
+        if r["is_numeric"]:
+            min_field = fmt_number(r["min"], num_width)
+            mean_field = fmt_number(r["mean"], num_width)
+            max_field = fmt_number(r["max"], num_width)
+            
+            min_col = f"{GREEN}{min_field}{RESET}"
+            mean_col = f"{GREEN}{mean_field}{RESET}"
+            max_col = f"{GREEN}{max_field}{RESET}"
+        else:
+            hyphen = f"{'-':>{num_width}}"
+            min_col = f"{RESET}{hyphen}{RESET}"
+            mean_col = f"{RESET}{hyphen}{RESET}"
+            max_col = f"{RESET}{hyphen}{RESET}"
 
-        min_field = fmt_number(r["min"], num_width)
-        mean_field = fmt_number(r["mean"], num_width)
-        max_field = fmt_number(r["max"], num_width)
         miss_field = f"{r['missing']:>{miss_width}d}"
-
-        # apply colors after padding
+        
         var_col = f"{BOLD_BLUE}{var_field}{RESET}"
         dim_col = dim_field
-        min_col = f"{GREEN}{min_field}{RESET}"
-        mean_col = f"{GREEN}{mean_field}{RESET}"
-        max_col = f"{GREEN}{max_field}{RESET}"
         miss_col = f"{RED}{miss_field}{RESET}"
 
+        line = f"{var_col} "
+        
         if have_long_name:
             ln_field = f"{r['long_name']:<{ln_width}}"
-            ln_col = f"{BLUE}{ln_field}{RESET}"
-            line = (
-                f"{var_col} "
-                f"{ln_col} "
-                f"{dim_col} "
-                f"{min_col} "
-                f"{mean_col} "
-                f"{max_col} "
-                f"{miss_col}"
-            )
-        else:
-            line = (
-                f"{var_col} "
-                f"{dim_col} "
-                f"{min_col} "
-                f"{mean_col} "
-                f"{max_col} "
-                f"{miss_col}"
-            )
+            ln_col = f"{CYAN}{ln_field}{RESET}"
+            line += f"{ln_col} "
+            
+        if have_units:
+            unit_field = f"{r['units']:<{unit_width}}"
+            unit_col = f"{PURPLE}{unit_field}{RESET}" 
+            line += f"{unit_col} "
+
+        line += (
+            f"{dim_col} "
+            f"{min_col} "
+            f"{mean_col} "
+            f"{max_col} "
+            f"{miss_col}"
+        )
 
         print(line)
 

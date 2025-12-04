@@ -1,36 +1,170 @@
 #!/scratch3/BMC/gsd-fv3-dev/Gonzalo.Ferrada/miniconda3/envs/fire/bin/python3
 import sys
+import fnmatch
 import pandas as pd
+import numpy as np
+
+# ANSI colors
+RESET = "\033[0m"
+BOLD = "\033[1m"
+BLUE = "\033[34m"
+GREEN = "\033[32m"
+RED = "\033[31m"
+YELLOW = "\033[33m"
+CYAN = "\033[36m"
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: csvsummary.py file.csv column_name [column_name2 ...]")
+    if len(sys.argv) < 2:
+        print("Usage: csvsummary file.csv [column_pattern] [>min_val] [<max_val] [~missing_val]")
         sys.exit(1)
 
     file = sys.argv[1]
-    cols = sys.argv[2:]
+    raw_args = sys.argv[2:]
 
+    # --- 1. PARSE ARGUMENTS ---
+    col_patterns = []
+    
+    # Filter constraints
+    gt_val = None       # Greater than
+    lt_val = None       # Less than
+    missing_vals = []   # Values to treat as NaN
+
+    for arg in raw_args:
+        # Check for Greater Than (e.g. >0)
+        if arg.startswith('>'):
+            try:
+                gt_val = float(arg[1:])
+            except ValueError:
+                print(f"{YELLOW}Warning: Invalid threshold format '{arg}'. Ignoring.{RESET}")
+        
+        # Check for Less Than (e.g. <100)
+        elif arg.startswith('<'):
+            try:
+                lt_val = float(arg[1:])
+            except ValueError:
+                print(f"{YELLOW}Warning: Invalid threshold format '{arg}'. Ignoring.{RESET}")
+        
+        # Check for Missing Value definition (e.g. ~-999)
+        elif arg.startswith('~'):
+            try:
+                val = float(arg[1:])
+                missing_vals.append(val)
+            except ValueError:
+                print(f"{YELLOW}Warning: Invalid missing value format '{arg}'. Ignoring.{RESET}")
+        
+        # Otherwise, treat as a column name/pattern
+        else:
+            col_patterns.append(arg)
+
+    # --- 2. LOAD DATA ---
     try:
         df = pd.read_csv(file)
     except Exception as e:
         print(f"Error reading file: {e}")
         sys.exit(1)
 
-    print(f"file: {file}")
-    print(f"{'Variable':<15}{'Min':>12}{'Mean':>12}{'Max':>12}")
-    print(f"{'-'*15}{'-'*12}{'-'*12}{'-'*12}")
+    all_cols = list(df.columns)
+    cols_to_process = []
 
-    for col in cols:
-        if col not in df.columns:
-            print(f"{col:<15}{'N/A':>12}{'N/A':>12}{'N/A':>12}")
-            continue
+    # --- 3. COLUMN SELECTION LOGIC ---
+    if not col_patterns:
+        cols_to_process = all_cols
+    else:
+        for pat in col_patterns:
+            if "*" in pat or "?" in pat:
+                matches = fnmatch.filter(all_cols, pat)
+                if not matches:
+                    matches = [c for c in all_cols if fnmatch.fnmatch(c.lower(), pat.lower())]
+                
+                if matches:
+                    for m in matches:
+                        if m not in cols_to_process:
+                            cols_to_process.append(m)
+                else:
+                    print(f"{YELLOW}Warning: No columns match pattern '{pat}'{RESET}")
+            elif pat in all_cols:
+                if pat not in cols_to_process:
+                    cols_to_process.append(pat)
+            else:
+                found_match = None
+                for c in all_cols:
+                    if c.lower() == pat.lower():
+                        found_match = c
+                        break
+                if found_match:
+                    print(f"{YELLOW}Warning: Column '{pat}' not found. Using '{found_match}' instead.{RESET}")
+                    if found_match not in cols_to_process:
+                        cols_to_process.append(found_match)
+                else:
+                    print(f"{RED}Error: Column '{pat}' does not exist in file.{RESET}")
+
+    if not cols_to_process:
+        print("No valid columns found to display.")
+        sys.exit(0)
+
+    # --- 4. DISPLAY HEADER INFO ---
+    print(f"file: {file}")
+    
+    # Show active filters if any
+    filters_info = []
+    if gt_val is not None: filters_info.append(f"x > {gt_val}")
+    if lt_val is not None: filters_info.append(f"x < {lt_val}")
+    if missing_vals: filters_info.append(f"exclude {missing_vals}")
+    
+    if filters_info:
+        print(f"{CYAN}Filters applied: {', '.join(filters_info)}{RESET}")
+
+    # Calculate widths
+    max_name_len = max([len(c) for c in cols_to_process] + [len("Variable")])
+    col_width = max(15, max_name_len + 2)
+    
+    header = f"{'Variable':<{col_width}}{'Min':>12}{'Mean':>12}{'Max':>12}"
+    print(header)
+    print("-" * len(header))
+
+    # --- 5. PROCESSING LOOP ---
+    for col in cols_to_process:
         try:
-            s = pd.to_numeric(df[col], errors='coerce').dropna()
-            if s.empty:
-                raise ValueError
-            print(f"{col:<15}{s.min():>12.2f}{s.mean():>12.2f}{s.max():>12.2f}")
+            # Convert to numeric
+            s = pd.to_numeric(df[col], errors='coerce')
+
+            # Skip text columns
+            if s.isna().all() and not df[col].empty:
+                print(f"{col:<{col_width}}{'-':>12}{'-':>12}{'-':>12}")
+                continue
+
+            # --- APPLY FILTERS ---
+            
+            # 1. Handle Missing Values (~)
+            if missing_vals:
+                s = s.replace(missing_vals, np.nan)
+            
+            # 2. Handle Greater Than (>)
+            if gt_val is not None:
+                s = s[s > gt_val]
+                
+            # 3. Handle Less Than (<)
+            if lt_val is not None:
+                s = s[s < lt_val]
+
+            # Drop NaNs after filtering
+            s_valid = s.dropna()
+
+            if s_valid.empty:
+                print(f"{col:<{col_width}}{'NaN':>12}{'NaN':>12}{'NaN':>12}")
+            else:
+                vmin = s_valid.min()
+                vmean = s_valid.mean()
+                vmax = s_valid.max()
+                
+                min_str = f"{BLUE}{vmin:>12.2f}{RESET}"
+                mean_str = f"{GREEN}{vmean:>12.2f}{RESET}"
+                max_str = f"{RED}{vmax:>12.2f}{RESET}"
+
+                print(f"{col:<{col_width}}{min_str}{mean_str}{max_str}")
+
         except Exception:
-            print(f"{col:<15}{'N/A':>12}{'N/A':>12}{'N/A':>12}")
+            print(f"{col:<{col_width}}{'Err':>12}{'Err':>12}{'Err':>12}")
 
 if __name__ == "__main__":
     main()
